@@ -1,11 +1,24 @@
 import { useEffect, useState, useRef } from 'react';
 import L from 'leaflet';
+import 'leaflet.heat';
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerRetina from 'leaflet/dist/images/marker-icon-2x.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 import Papa from 'papaparse';
 import './App.css';
 import 'leaflet/dist/leaflet.css';
 
+// Fix Leaflet’s default icon paths
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: markerRetina,
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow
+});
+
 function App() {
   const [markerCount, setMarkerCount] = useState(0);
+  const [viewMode, setViewMode] = useState('markers');
   const [selectedLocationType, setSelectedLocationType] = useState('event');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [availableCategories, setAvailableCategories] = useState([]);
@@ -49,63 +62,74 @@ function App() {
   const markerLayerRef = useRef(null);
 
  function loadAndDisplayMarkers(map) {
+  // Ensure the layer group exists, then clear it
   if (markerLayerRef.current) {
     markerLayerRef.current.clearLayers();
   } else {
     markerLayerRef.current = L.layerGroup().addTo(map);
   }
 
-  setMarkerCount(0);
+  // ─── HEATMAP MODE ────────────────────────────────────────────────────────
+  if (viewMode === 'heatmap') {
+    const heatmapPoints = rows.reduce((acc, row) => {
+      const cat = row.ClaimID?.split('-')[0];
+      if (selectedCategory && cat !== selectedCategory) return acc;
+      const latRaw = selectedLocationType === 'claimant'
+        ? row.ClaimantLatitude
+        : row.EventLatitude;
+      const lonRaw = selectedLocationType === 'claimant'
+        ? row.ClaimantLongitude
+        : row.EventLongitude;
+      const lat = parseFloat(latRaw);
+      const lon = parseFloat(lonRaw);
+      if (!isNaN(lat) && !isNaN(lon)) acc.push([lat, lon, 1]);
+      return acc;
+    }, []);
+
+    if (heatmapPoints.length) {
+      L.heatLayer(heatmapPoints, { radius: 25, blur: 15, maxZoom: 17 })
+        .addTo(markerLayerRef.current);
+    }
+
+    setMarkerCount(heatmapPoints.length);
+    return;  // skip drawing markers
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // ─── MARKERS MODE ─────────────────────────────────────────────────────────
+  let validCount = 0;
   const categorySet = new Set();
 
-  fetch(`${import.meta.env.BASE_URL}claims.csv`)
-    .then(response => response.text())
-    .then(csvText => {
-      console.log("📦 Fetching claims.csv...");
-      Papa.parse(csvText, {
-        header: true,
-        complete: function (results) {
-  let total = 0;
-  let valid = 0;
+  rows.forEach(row => {
+    const claimId = row.ClaimID;
+    const cat = claimId?.split('-')[0];
+    if (selectedCategory && cat !== selectedCategory) return;
 
-            results.data.forEach((row) => {
-              console.log(`🔍 Processing row:`, row);
-              if (row.ClaimID) categorySet.add(row.ClaimID.split('-')[0]);
+    const latRaw = selectedLocationType === 'claimant'
+      ? row.ClaimantLatitude
+      : row.EventLatitude;
+    const lonRaw = selectedLocationType === 'claimant'
+      ? row.ClaimantLongitude
+      : row.EventLongitude;
+    const lat = parseFloat(latRaw);
+    const lon = parseFloat(lonRaw);
+    if (!claimId || isNaN(lat) || isNaN(lon)) return;
 
-              const claimId = row.ClaimID;
-              if (selectedCategory && claimId.split('-')[0] !== selectedCategory) {
-                return;
-              }
-              const location = selectedLocationType === 'claimant' ? row.ClaimantLocation : row.EventLocation;
-              const latRaw = selectedLocationType === 'claimant' ? row.ClaimantLatitude : row.EventLatitude;
-              const lonRaw = selectedLocationType === 'claimant' ? row.ClaimantLongitude : row.EventLongitude;
+    const icon = categoryIcons[cat] || categoryIcons.default;
+    const locText = selectedLocationType === 'claimant'
+      ? row.ClaimantLocation
+      : row.EventLocation;
 
-              console.warn(`⚠️ Skipping row due to missing coords for ${selectedLocationType} location:`, {
-                claimId, latRaw, lonRaw
-              });
-              if (!claimId || isNaN(parseFloat(latRaw)) || isNaN(parseFloat(lonRaw))) {
-                console.warn(`⚠️ Skipping invalid row:`, row);
-                return;
-              }
+    L.marker([lat, lon], { icon })
+      .bindPopup(`<strong>${claimId}</strong><br>${locText}<br>${row.EventDate}`)
+      .addTo(markerLayerRef.current);
 
-              const lat = parseFloat(latRaw);
-              const lon = parseFloat(lonRaw);
-              const icon = categoryIcons[claimId.split('-')[0]] || categoryIcons.default;
+    validCount++;
+    categorySet.add(cat);
+  });
 
-              const marker = L.marker([lat, lon], { icon })
-                .bindPopup(`<strong>${claimId}</strong><br>${location}<br>${row.EventDate}`);
-
-              markerLayerRef.current.addLayer(marker);
-              valid++;
-              categorySet.add(claimId.split('-')[0]);
-            });
-
-            console.log(`📊 Total rows: ${total}, valid markers: ${valid}`);
-            setAvailableCategories([...categorySet].sort());
-            setMarkerCount(valid);
-          }
-      });
-    });
+  setMarkerCount(validCount);
+  setAvailableCategories([...categorySet].sort());
 }
 
   useEffect(() => {
@@ -121,15 +145,13 @@ function App() {
 
     markerLayerRef.current = L.layerGroup().addTo(map);
 
-    loadAndDisplayMarkers(map);
   }, []);
 
   useEffect(() => {
-    if (mapRef.current) {
+    if (mapRef.current && rows.length > 0) {
       loadAndDisplayMarkers(mapRef.current);
     }
-  }, [selectedCategory, selectedLocationType]);
-
+}, [rows, selectedCategory, selectedLocationType, viewMode]);
   return (
     <div className="App">
       <div style={{ padding: "1rem", background: "#f0f0f0" }}>
@@ -149,6 +171,16 @@ function App() {
             <option value="claimant">Claimant Location</option>
           </select>
         </label>
+        <label style={{ marginLeft: "2rem" }}>
+          View Mode:{" "}
+          <select
+            value={viewMode}
+              onChange={e => setViewMode(e.target.value)}
+            >
+              <option value="markers">Markers</option>
+              <option value="heatmap">Heatmap</option>
+            </select>
+          </label>
       </div>
       <div style={{ padding: "1rem", background: "#e0e0e0" }}>
         <strong>Markers on map:</strong> {markerCount}
