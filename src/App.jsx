@@ -185,8 +185,8 @@ function App() {
       <div style={{ padding: "1rem", background: "#e0e0e0" }}>
         <strong>Markers on map:</strong> {markerCount}
       </div>
-      <header style={{ padding: "1rem", background: "#282c34", color: "white" }}>
-        <h1>Claim Map of Ukraine</h1>
+      <header style={{ padding: "0.5rem 1rem", background: "#282c34", color: "white" }}>
+        <h1 style={{ fontSize: "1.25rem", margin: 0 }}>Claims Map of Ukraine</h1>
       </header>
       <main style={{ height: "calc(100vh - 80px)" }}>
         <div id="map" style={{ height: "100%", width: "100%" }} />
